@@ -1,0 +1,6 @@
+streamlit
+pandas
+plotly
+alpaca-trade-api
+python-dotenv
+pytz
