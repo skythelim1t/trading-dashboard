@@ -342,6 +342,50 @@ def calculate_daily_summary(matched_trades, days=7):
 
     return daily_summary, daily_performers
 
+def combine_daily_summaries(daily_summaries):
+    """Combine daily summaries from multiple strategies"""
+    # Convert all summaries to dataframes if they aren't already
+    dfs = [summary if isinstance(summary, pd.DataFrame) else pd.DataFrame(summary) 
+           for summary in daily_summaries]
+    
+    # Combine all dataframes
+    combined = pd.concat(dfs)
+    
+    # Group by date and aggregate
+    return combined.groupby(combined.index).agg({
+        'Total Profit': 'sum',
+        'Number of Trades': 'sum',
+        'Win Rate %': 'mean',
+        'Avg Profit/Trade': 'mean',
+        'Avg Profit %': 'mean',
+        'Unique Symbols': 'sum',
+        'Avg Duration (mins)': 'mean'
+    })
+
+def combine_stock_summaries(stock_summaries):
+    """Combine stock summaries from multiple strategies"""
+    # Convert all summaries to dataframes if they aren't already
+    dfs = [summary if isinstance(summary, pd.DataFrame) else pd.DataFrame(summary) 
+           for summary in stock_summaries]
+    
+    # Combine all dataframes
+    combined = pd.concat(dfs)
+    
+    # Group by symbol and aggregate
+    return combined.groupby('Symbol').agg({
+        'Win_Rate_Pct': 'mean',
+        'Total_Trades': 'sum',
+        'Total_Quantity': 'sum',
+        'Total_Profit': 'sum',
+        'Average_Profit': 'mean',
+        'Average_Profit_Pct': 'mean',
+        'Max_Profit': 'max',
+        'Max_Profit_Pct': 'max',
+        'Min_Profit': 'min',
+        'Min_Profit_Pct': 'min',
+        'Average_Trade_Duration': 'mean'
+    }).reset_index()
+
 def main():
     st.title("Trading Performance Dashboard")
     
