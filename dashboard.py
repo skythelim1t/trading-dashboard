@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import pytz
 from alpaca_trade_api.rest import REST
 import os
+import time
 from dotenv import load_dotenv
 
 # Load environment variables and configure page
@@ -13,7 +14,7 @@ st.set_page_config(page_title="Trading Performance Dashboard", layout="wide")
 
 # Initialize session state for refresh tracking
 if 'last_refresh' not in st.session_state:
-    st.session_state.last_refresh = datetime.min
+    st.session_state.last_refresh = datetime.now(pytz.timezone('US/Eastern'))
 
 def load_api_keys():
     """Load API keys from environment variables or Streamlit secrets"""
@@ -31,6 +32,10 @@ def should_refresh():
     """Check if data should be refreshed based on market hours and last refresh"""
     now = datetime.now(pytz.timezone('US/Eastern'))
     last_refresh = st.session_state.last_refresh
+    
+    # Convert last_refresh to timezone-aware if it isn't already
+    if last_refresh.tzinfo is None:
+        last_refresh = pytz.timezone('US/Eastern').localize(last_refresh)
     
     # Check if it's a weekday
     if now.weekday() > 4:  # Saturday = 5, Sunday = 6
@@ -332,7 +337,7 @@ def main():
     # Check if we should refresh data
     if should_refresh() or 'data' not in st.session_state:
         with st.spinner('Refreshing trading data...'):
-            # Your existing analysis code here
+            # Get all the data
             executed_trades = get_executed_trades(api)
             df_trades = pd.DataFrame(executed_trades)
             matched_trades = match_buy_and_sell_trades(df_trades)
@@ -362,15 +367,28 @@ def main():
     
     with tab1:
         plot_daily_performance(st.session_state.data['daily_summary'])
+        # Add daily performers
+        st.subheader("Daily Best/Worst Performers")
+        for date, performers in st.session_state.data['daily_performers'].items():
+            st.write(f"\n{date}:")
+            best_symbol, best_profit = performers['Best']
+            worst_symbol, worst_profit = performers['Worst']
+            st.write(f"Best:  {best_symbol:5} (${best_profit:.2f})")
+            st.write(f"Worst: {worst_symbol:5} (${worst_profit:.2f})")
         
     with tab2:
         plot_stock_performance(st.session_state.data['stock_summary'])
+        # Add detailed stock summary table
+        st.subheader("Detailed Stock Performance")
+        st.dataframe(st.session_state.data['stock_summary'].sort_values('Total_Trades', ascending=False))
         
     with tab3:
+        st.subheader("Current Portfolio Holdings")
         st.dataframe(st.session_state.data['current_holdings'])
     
-    # Schedule next refresh
+    # Force refresh if needed
     if should_refresh():
+        time.sleep(3600)  # Wait for an hour
         st.experimental_rerun()
 
 if __name__ == "__main__":
