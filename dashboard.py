@@ -7,6 +7,7 @@ import pytz
 from alpaca_trade_api.rest import REST
 import os
 import time
+import statistics
 from dotenv import load_dotenv
 
 # Load environment variables and configure page
@@ -17,16 +18,32 @@ if 'last_refresh' not in st.session_state:
     st.session_state.last_refresh = datetime.now(pytz.timezone('US/Eastern'))
 
 def load_api_keys():
-    """Load API keys from environment variables or Streamlit secrets"""
+    """Load API keys for all three strategies from environment variables or Streamlit secrets"""
     if os.path.exists('.env'):
         load_dotenv()
         return {
-            'ALPACA_API_KEY': os.getenv('ALPACA_API_KEY'),
-            'ALPACA_SECRET_KEY': os.getenv('ALPACA_SECRET_KEY'),
-            'ALPACA_BASE_URL': os.getenv('ALPACA_BASE_URL')
+            'strat_1': {
+                'ALPACA_API_KEY': os.getenv('ALPACA_API_KEY'),
+                'ALPACA_SECRET_KEY': os.getenv('ALPACA_SECRET_KEY'),
+                'ALPACA_BASE_URL': os.getenv('ALPACA_BASE_URL')
+            },
+            'strat_2': {
+                'ALPACA_API_KEY': os.getenv('ALPACA_API_KEY_STRAT_2'),
+                'ALPACA_SECRET_KEY': os.getenv('ALPACA_SECRET_KEY_STRAT_2'),
+                'ALPACA_BASE_URL': os.getenv('ALPACA_BASE_URL')
+            },
+            'strat_3': {
+                'ALPACA_API_KEY': os.getenv('ALPACA_API_KEY_STRAT_3'),
+                'ALPACA_SECRET_KEY': os.getenv('ALPACA_SECRET_KEY_STRAT_3'),
+                'ALPACA_BASE_URL': os.getenv('ALPACA_BASE_URL')
+            }
         }
     else:
-        return st.secrets['alpaca']
+        return {
+            'strat_1': st.secrets['alpaca_strat_1'],
+            'strat_2': st.secrets['alpaca_strat_2'],
+            'strat_3': st.secrets['alpaca_strat_3']
+        }
 
 def should_refresh():
     """Check if data should be refreshed based on market hours and last refresh"""
@@ -328,68 +345,110 @@ def calculate_daily_summary(matched_trades, days=7):
 def main():
     st.title("Trading Performance Dashboard")
     
-    # Load API keys
+    # Load API keys for all strategies
     api_keys = load_api_keys()
-    api = REST(api_keys['ALPACA_API_KEY'], 
-              api_keys['ALPACA_SECRET_KEY'], 
-              api_keys['ALPACA_BASE_URL'])
+    apis = {
+        'Strategy 1': REST(api_keys['strat_1']['ALPACA_API_KEY'], 
+                         api_keys['strat_1']['ALPACA_SECRET_KEY'], 
+                         api_keys['strat_1']['ALPACA_BASE_URL']),
+        'Strategy 2': REST(api_keys['strat_2']['ALPACA_API_KEY'], 
+                         api_keys['strat_2']['ALPACA_SECRET_KEY'], 
+                         api_keys['strat_2']['ALPACA_BASE_URL']),
+        'Strategy 3': REST(api_keys['strat_3']['ALPACA_API_KEY'], 
+                         api_keys['strat_3']['ALPACA_SECRET_KEY'], 
+                         api_keys['strat_3']['ALPACA_BASE_URL'])
+    }
+    
+    # Add strategy selector
+    selected_strategy = st.sidebar.radio(
+        "Select Strategy",
+        ["All Strategies", "Strategy 1", "Strategy 2", "Strategy 3"]
+    )
     
     # Check if we should refresh data
     if should_refresh() or 'data' not in st.session_state:
         with st.spinner('Refreshing trading data...'):
-            # Get all the data
-            executed_trades = get_executed_trades(api)
-            df_trades = pd.DataFrame(executed_trades)
-            matched_trades = match_buy_and_sell_trades(df_trades)
-            trade_stats = calculate_trade_stats(matched_trades, api)
-            stock_summary = calculate_stock_summary(matched_trades)
-            daily_summary, daily_performers = calculate_daily_summary(matched_trades)
-            current_holdings = get_current_holdings(api)
+            all_data = {}
+            
+            for strategy_name, api in apis.items():
+                executed_trades = get_executed_trades(api)
+                df_trades = pd.DataFrame(executed_trades)
+                matched_trades = match_buy_and_sell_trades(df_trades)
+                trade_stats = calculate_trade_stats(matched_trades, api)
+                stock_summary = calculate_stock_summary(matched_trades)
+                daily_summary, daily_performers = calculate_daily_summary(matched_trades)
+                current_holdings = get_current_holdings(api)
+                
+                all_data[strategy_name] = {
+                    'trade_stats': trade_stats,
+                    'stock_summary': stock_summary,
+                    'daily_summary': daily_summary,
+                    'daily_performers': daily_performers,
+                    'current_holdings': current_holdings,
+                    'matched_trades': matched_trades
+                }
             
             # Store in session state
-            st.session_state.data = {
-                'trade_stats': trade_stats,
-                'stock_summary': stock_summary,
-                'daily_summary': daily_summary,
-                'daily_performers': daily_performers,
-                'current_holdings': current_holdings
-            }
+            st.session_state.data = all_data
             st.session_state.last_refresh = datetime.now(pytz.timezone('US/Eastern'))
     
     # Display last refresh time
     st.caption(f"Last refreshed: {st.session_state.last_refresh.strftime('%Y-%m-%d %H:%M:%S ET')}")
     
-    # Create dashboard layout
-    create_metrics_cards(st.session_state.data['trade_stats'])
+    # Display data based on selected strategy
+    if selected_strategy == "All Strategies":
+        # Aggregate data from all strategies
+        combined_stats = combine_strategy_stats([data['trade_stats'] 
+                                              for data in st.session_state.data.values()])
+        create_metrics_cards(combined_stats)
+    else:
+        create_metrics_cards(st.session_state.data[selected_strategy]['trade_stats'])
     
     # Create tabs for different views
     tab1, tab2, tab3 = st.tabs(["Daily Performance", "Stock Analysis", "Current Holdings"])
     
     with tab1:
-        plot_daily_performance(st.session_state.data['daily_summary'])
-        # Add daily performers
-        st.subheader("Daily Best/Worst Performers")
-        for date, performers in st.session_state.data['daily_performers'].items():
-            st.write(f"\n{date}:")
-            best_symbol, best_profit = performers['Best']
-            worst_symbol, worst_profit = performers['Worst']
-            st.write(f"Best:  {best_symbol:5} (${best_profit:.2f})")
-            st.write(f"Worst: {worst_symbol:5} (${worst_profit:.2f})")
+        if selected_strategy == "All Strategies":
+            # Combine daily summaries
+            combined_daily = combine_daily_summaries([data['daily_summary'] 
+                                                   for data in st.session_state.data.values()])
+            plot_daily_performance(combined_daily)
+        else:
+            plot_daily_performance(st.session_state.data[selected_strategy]['daily_summary'])
         
     with tab2:
-        plot_stock_performance(st.session_state.data['stock_summary'])
-        # Add detailed stock summary table
-        st.subheader("Detailed Stock Performance")
-        st.dataframe(st.session_state.data['stock_summary'].sort_values('Total_Trades', ascending=False))
+        if selected_strategy == "All Strategies":
+            combined_stock = combine_stock_summaries([data['stock_summary'] 
+                                                   for data in st.session_state.data.values()])
+            plot_stock_performance(combined_stock)
+        else:
+            plot_stock_performance(st.session_state.data[selected_strategy]['stock_summary'])
         
     with tab3:
-        st.subheader("Current Portfolio Holdings")
-        st.dataframe(st.session_state.data['current_holdings'])
+        if selected_strategy == "All Strategies":
+            for strategy in apis.keys():
+                st.subheader(f"{strategy} Holdings")
+                st.dataframe(st.session_state.data[strategy]['current_holdings'])
+        else:
+            st.dataframe(st.session_state.data[selected_strategy]['current_holdings'])
     
     # Force refresh if needed
     if should_refresh():
-        time.sleep(3600)  # Wait for an hour
+        time.sleep(3600)
         st.experimental_rerun()
+
+# Helper function to combine stats from multiple strategies
+def combine_strategy_stats(stats_list):
+    combined = {
+        'Current Cash Balance': sum(s['Current Cash Balance'] for s in stats_list),
+        'Total Trades': sum(s['Total Trades'] for s in stats_list),
+        'Total Profit': sum(s['Total Profit'] for s in stats_list),
+        'Average Profit per Trade': statistics.mean(s['Average Profit per Trade'] for s in stats_list),
+        'Win Rate %': statistics.mean(s['Win Rate %'] for s in stats_list)
+    }
+    return combined
+
+# Add similar helper functions for combining daily and stock summaries
 
 if __name__ == "__main__":
     main()
