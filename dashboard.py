@@ -109,6 +109,217 @@ def plot_stock_performance(stock_summary):
     
     st.plotly_chart(fig, use_container_width=True)
 
+# Fetch all trades executed (this retrieves orders; we will filter for filled trades)
+def get_executed_trades(api):
+    CHUNK_SIZE = 500
+    all_orders = []
+    start_time = pd.Timestamp.utcnow()  # Start with the current UTC time
+    check_for_more_orders = True
+
+    while check_for_more_orders:
+        # Fetch a chunk of orders
+        api_orders = api.list_orders(
+            status='closed',
+            until=start_time.isoformat(),
+            direction='desc',
+            limit=CHUNK_SIZE,
+            nested=False,
+        )
+
+        # Append fetched orders to the list
+        all_orders.extend(api_orders)
+
+        if len(api_orders) == CHUNK_SIZE:
+            # More orders might be available; update `start_time`
+            # Ensure the timestamp is timezone-aware
+            last_order_time = all_orders[-3].submitted_at
+            start_time = pd.Timestamp(last_order_time).tz_convert('UTC') if pd.Timestamp(last_order_time).tzinfo else pd.Timestamp(last_order_time, tz='UTC')
+        else:
+            # Final chunk, stop fetching
+            check_for_more_orders = False
+
+    # Extract and filter trades for orders that were filled
+    trades = []
+    for order in all_orders:
+        if order.filled_at and order.status == 'filled':  # Check if the order was filled
+            trades.append({
+                'Order ID': order.id,
+                'Symbol': order.symbol,
+                'Side': order.side,
+                'Quantity': order.qty,
+                'Filled Quantity': order.filled_qty,
+                'Filled Average Price': order.filled_avg_price,
+                'Status': order.status,
+                'Filled At': order.filled_at,
+                'Submitted At': order.submitted_at,
+                'Type': order.order_type,
+                'Time in Force': order.time_in_force
+            })
+
+    return trades
+
+
+def match_buy_and_sell_trades(df_trades):
+    # Separate buy and sell trades
+    buys = df_trades[df_trades['Side'] == 'buy'].copy()
+    sells = df_trades[df_trades['Side'] == 'sell'].copy()
+
+    # Convert 'Filled At' to datetime for comparison
+    buys['Filled At'] = pd.to_datetime(buys['Filled At'])
+    sells['Filled At'] = pd.to_datetime(sells['Filled At'])
+
+    # Sort both DataFrames by 'Filled At'
+    buys = buys.sort_values(by='Filled At')
+    sells = sells.sort_values(by='Filled At')
+
+    # Initialize a list to store matched trades
+    matches = []
+
+    # Iterate through each sell trade
+    for _, sell in sells.iterrows():
+        # Find matching buy trades
+        potential_matches = buys[
+            (buys['Symbol'] == sell['Symbol']) &
+            (buys['Filled Quantity'] == sell['Filled Quantity']) &
+            (buys['Filled At'] < sell['Filled At'])  # Ensure buy is before sell
+        ]
+
+        if not potential_matches.empty:
+            # Select the first matching buy trade
+            matched_buy = potential_matches.iloc[0]
+
+            # Append the match to the list
+            matches.append({
+                'Buy Order ID': matched_buy['Order ID'],
+                'Buy Filled At': matched_buy['Filled At'],
+                'Sell Order ID': sell['Order ID'],
+                'Sell Filled At': sell['Filled At'],
+                'Symbol': sell['Symbol'],
+                'Quantity': float(sell['Filled Quantity']),
+                'Buy Price': matched_buy['Filled Average Price'],
+                'Sell Price': sell['Filled Average Price'],
+                'Profit': (float(sell['Filled Average Price']) - float(matched_buy['Filled Average Price'])) * float(sell['Filled Quantity']),
+                'Trade Duration (mins)': (sell['Filled At'] - matched_buy['Filled At']).total_seconds() / 60
+            })
+
+            # Remove the matched buy trade from the buys DataFrame
+            buys = buys.drop(matched_buy.name)
+
+    # Convert matches to a DataFrame
+    matched_trades = pd.DataFrame(matches)
+    return matched_trades
+
+
+# Calculate statistics
+def get_current_holdings(api):
+    positions = api.list_positions()
+    holdings = []
+    for position in positions:
+        holdings.append({
+            'Symbol': position.symbol,
+            'Quantity': float(position.qty),
+            'Current Price': float(position.current_price),
+            'Market Value': float(position.market_value),
+            'Cost Basis': float(position.cost_basis),
+            'Unrealized P&L': float(position.unrealized_pl),
+            'Unrealized P&L %': float(position.unrealized_plpc) * 100
+        })
+    return pd.DataFrame(holdings)
+
+
+def calculate_trade_stats(matched_trades, api, initial_balance=100000):
+    matched_trades[['Sell Price', 'Buy Price']] = matched_trades[['Sell Price', 'Buy Price']].astype(float)
+    profitable_trades = len(matched_trades[matched_trades['Profit'] > 0])
+    total_profit = matched_trades['Profit'].sum()
+
+    # Get actual account balance from Alpaca
+    account = api.get_account()
+    current_balance = float(account.portfolio_value)  # Non-marginable cash balance
+
+    stats = {
+        'Current Cash Balance': round(current_balance, 2),
+        'Win Rate %': round((profitable_trades / len(matched_trades)) * 100, 2),
+        'Return on Initial Capital %': round((total_profit / initial_balance) * 100, 2),
+        'Total Trades': len(matched_trades),
+        'Total Profit': round(matched_trades['Profit'].sum(), 2),
+        'Average Profit per Trade': round(matched_trades['Profit'].mean(), 2),
+        'Average Profit % per Trade': round((matched_trades['Profit'] /
+                                             (matched_trades['Buy Price'] * matched_trades['Quantity']) * 100).mean(),
+                                            2),
+        'Max Profit': round(matched_trades['Profit'].max(), 2),
+        'Max Profit %': round((matched_trades['Profit'] /
+                               (matched_trades['Buy Price'] * matched_trades['Quantity']) * 100).max(), 2),
+        'Min Profit': round(matched_trades['Profit'].min(), 2),
+        'Min Profit %': round((matched_trades['Profit'] /
+                               (matched_trades['Buy Price'] * matched_trades['Quantity']) * 100).min(), 2),
+        'Average Trade Duration (mins)': round(matched_trades['Trade Duration (mins)'].mean(), 2)
+    }
+    return stats
+
+def calculate_stock_summary(matched_trades):
+    stock_summary = matched_trades.groupby('Symbol').agg(
+        Win_Rate_Pct=('Profit', lambda x: round(len(x[x > 0]) / len(x) * 100, 2)),
+        Total_Trades=('Quantity', 'count'),
+        Total_Quantity=('Quantity', 'sum'),
+        Total_Profit=('Profit', lambda x: round(x.sum(), 2)),
+        Average_Profit=('Profit', lambda x: round(x.mean(), 2)),
+        Average_Profit_Pct=('Profit', lambda x: round((x.mean() /
+            (matched_trades.loc[x.index, 'Buy Price'] *
+             matched_trades.loc[x.index, 'Quantity']).mean() * 100), 2)),
+        Max_Profit=('Profit', lambda x: round(x.max(), 2)),
+        Max_Profit_Pct=('Profit', lambda x: round((x.max() /
+            (matched_trades.loc[x.index, 'Buy Price'] *
+             matched_trades.loc[x.index, 'Quantity']).max() * 100), 2)),
+        Min_Profit=('Profit', lambda x: round(x.min(), 2)),
+        Min_Profit_Pct=('Profit', lambda x: round((x.min() /
+            (matched_trades.loc[x.index, 'Buy Price'] *
+             matched_trades.loc[x.index, 'Quantity']).min() * 100), 2)),
+        Average_Trade_Duration=('Trade Duration (mins)', lambda x: round(x.mean(), 2))
+    ).reset_index()
+    return stock_summary
+
+def calculate_daily_summary(matched_trades, days=7):
+    # Convert dates to datetime if they aren't already
+    matched_trades['Sell Filled At'] = pd.to_datetime(matched_trades['Sell Filled At'])
+
+    # Get only the trades from last 5 trading days
+    today = pd.Timestamp.now(tz='UTC').normalize()
+    cutoff_date = today - pd.Timedelta(days=days)
+    recent_trades = matched_trades[matched_trades['Sell Filled At'] >= cutoff_date].copy()
+
+    # Calculate percentage profit for each trade
+    recent_trades['Profit %'] = (((recent_trades['Sell Price'] - recent_trades['Buy Price']) / recent_trades['Buy Price']) * 100) - 1
+
+    # Group by date
+    daily_summary = recent_trades.groupby(recent_trades['Sell Filled At'].dt.date).agg({
+        'Profit': ['sum', 'count', lambda x: (x > 0).mean() * 100, 'mean'],
+        'Profit %': 'mean',  # Added average profit percentage
+        'Symbol': 'nunique',
+        'Trade Duration (mins)': 'mean'
+    }).round(2)
+
+    # Rename columns
+    daily_summary.columns = ['Total Profit', 'Number of Trades', 'Win Rate %', 'Avg Profit/Trade',
+                           'Avg Profit %', 'Unique Symbols', 'Avg Duration (mins)']
+
+    # Calculate daily best and worst performers
+    daily_performers = {}
+    for date in recent_trades['Sell Filled At'].dt.date.unique():
+        day_trades = recent_trades[recent_trades['Sell Filled At'].dt.date == date]
+
+        # Group by symbol and calculate total profit
+        symbol_profits = day_trades.groupby('Symbol')['Profit'].sum()
+
+        if not symbol_profits.empty:
+            best_symbol = symbol_profits.idxmax()
+            worst_symbol = symbol_profits.idxmin()
+            daily_performers[date] = {
+                'Best': (best_symbol, symbol_profits[best_symbol]),
+                'Worst': (worst_symbol, symbol_profits[worst_symbol])
+            }
+
+    return daily_summary, daily_performers
+
 def main():
     st.title("Trading Performance Dashboard")
     
