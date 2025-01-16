@@ -355,7 +355,7 @@ def combine_daily_summaries(daily_summaries):
     return combined.groupby(combined.index).agg({
         'Total Profit': 'sum',
         'Number of Trades': 'sum',
-        'Win Rate %': 'mean',
+        'Win Rate %': lambda x: round(x.mean(), 2),  # Round win rate to 2 decimal places
         'Avg Profit/Trade': 'mean',
         'Avg Profit %': 'mean',
         'Unique Symbols': 'sum',
@@ -488,7 +488,7 @@ def combine_strategy_stats(stats_list):
         'Total Trades': sum(s['Total Trades'] for s in stats_list),
         'Total Profit': sum(s['Total Profit'] for s in stats_list),
         'Average Profit per Trade': statistics.mean(s['Average Profit per Trade'] for s in stats_list),
-        'Win Rate %': statistics.mean(s['Win Rate %'] for s in stats_list)
+        'Win Rate %': round(statistics.mean(s['Win Rate %'] for s in stats_list), 2)
     }
     return combined
 
