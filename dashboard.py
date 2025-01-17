@@ -68,12 +68,13 @@ def should_refresh():
 
 def create_metrics_cards(trade_stats):
     """Create metric cards for key statistics"""
-    cols = st.columns(4)
+    cols = st.columns(5)
     
     metrics = [
+        ("Portfolio Value", f"${trade_stats['Portfolio Value']:,.2f}"),
+        # ("Cash Balance", f"${trade_stats['Cash Balance']:,.2f}"),
         ("Win Rate", f"{trade_stats['Win Rate %']}%"),
         ("Total Profit", f"${trade_stats['Total Profit']:,.2f}"),
-        ("Avg Profit/Trade", f"${trade_stats['Average Profit per Trade']:,.2f}"),
         ("Total Trades", trade_stats['Total Trades'])
     ]
     
@@ -260,12 +261,14 @@ def calculate_trade_stats(matched_trades, api, initial_balance=100000):
     profitable_trades = len(matched_trades[matched_trades['Profit'] > 0])
     total_profit = matched_trades['Profit'].sum()
 
-    # Get actual account balance from Alpaca
+    # Get actual account balance and portfolio value from Alpaca
     account = api.get_account()
-    current_balance = float(account.portfolio_value)  # Non-marginable cash balance
+    current_balance = float(account.portfolio_value)  # Total portfolio value including positions
+    cash_balance = float(account.cash)  # Cash only
 
     stats = {
-        'Current Cash Balance': round(current_balance, 2),
+        'Portfolio Value': round(current_balance, 2),
+        'Cash Balance': round(cash_balance, 2),
         'Win Rate %': round((profitable_trades / len(matched_trades)) * 100, 2),
         'Return on Initial Capital %': round((total_profit / initial_balance) * 100, 2),
         'Total Trades': len(matched_trades),
@@ -611,7 +614,8 @@ def main():
 # Helper function to combine stats from multiple strategies
 def combine_strategy_stats(stats_list):
     combined = {
-        'Current Cash Balance': sum(s['Current Cash Balance'] for s in stats_list),
+        'Portfolio Value': sum(s['Portfolio Value'] for s in stats_list),
+        'Cash Balance': sum(s['Cash Balance'] for s in stats_list),
         'Total Trades': sum(s['Total Trades'] for s in stats_list),
         'Total Profit': sum(s['Total Profit'] for s in stats_list),
         'Average Profit per Trade': statistics.mean(s['Average Profit per Trade'] for s in stats_list),
