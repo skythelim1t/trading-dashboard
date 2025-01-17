@@ -72,6 +72,7 @@ def create_metrics_cards(trade_stats):
     
     metrics = [
         ("Portfolio Value", f"${trade_stats['Portfolio Value']:,.2f}"),
+        ("Portfolio Return", f"{trade_stats['Portfolio Return']}%"),
         # ("Cash Balance", f"${trade_stats['Cash Balance']:,.2f}"),
         ("Win Rate", f"{trade_stats['Win Rate %']}%"),
         ("Total Profit", f"${trade_stats['Total Profit']:,.2f}"),
@@ -633,8 +634,10 @@ def combine_strategy_stats(stats_list):
         stat_with_defaults.update(s)
         processed_stats.append(stat_with_defaults)
     
+    total_initial_capital = sum(100000 for s in processed_stats)
     combined = {
         'Portfolio Value': sum(s['Portfolio Value'] for s in processed_stats),
+        'Portfolio Return': round((sum(s['Portfolio Value'] for s in processed_stats) - total_initial_capital) / total_initial_capital, 2),
         'Cash Balance': sum(s['Cash Balance'] for s in processed_stats),
         'Total Trades': sum(s['Total Trades'] for s in processed_stats),
         'Total Profit': sum(s['Total Profit'] for s in processed_stats),
