@@ -81,7 +81,10 @@ def create_metrics_cards(trade_stats):
         col.metric(label, value)
 
 def plot_daily_performance(daily_summary):
-    """Create daily performance chart"""
+    """Create daily performance chart, excluding days with no trades"""
+    # Filter out days with no trades
+    daily_summary = daily_summary[daily_summary['Number of Trades'] > 0]
+    
     fig = go.Figure()
     
     # Add profit line
@@ -112,7 +115,10 @@ def plot_daily_performance(daily_summary):
     st.plotly_chart(fig, use_container_width=True)
 
 def plot_stock_performance(stock_summary):
-    """Create stock performance visualization"""
+    """Create stock performance visualization, excluding stocks with no trades"""
+    # Filter out stocks with no trades
+    stock_summary = stock_summary[stock_summary['Total_Trades'] > 0]
+    
     fig = px.scatter(
         stock_summary,
         x='Win_Rate_Pct',
@@ -300,7 +306,7 @@ def calculate_stock_summary(matched_trades):
     ).reset_index()
     return stock_summary
 
-def calculate_daily_summary(matched_trades, days=7):
+def calculate_daily_summary(matched_trades, days=9):
     # Convert dates to datetime if they aren't already
     matched_trades['Sell Filled At'] = pd.to_datetime(matched_trades['Sell Filled At'])
 
