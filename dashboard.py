@@ -448,8 +448,8 @@ def main():
     else:
         create_metrics_cards(st.session_state.data[selected_strategy]['trade_stats'])
     
-    # Create tabs for different views
-    tab1, tab2, tab3 = st.tabs(["Daily Performance", "Stock Analysis", "Current Holdings"])
+    # Update the tabs to include All Trades
+    tab1, tab2, tab3, tab4 = st.tabs(["Daily Performance", "Stock Analysis", "Current Holdings", "All Trades"])
     
     with tab1:
         if selected_strategy == "All Strategies":
@@ -476,6 +476,127 @@ def main():
         else:
             st.dataframe(st.session_state.data[selected_strategy]['current_holdings'])
     
+        with tab4:
+        st.subheader("All Trades")
+        
+        if selected_strategy == "All Strategies":
+            # Combine matched trades from all strategies
+            all_trades = []
+            for strategy_name, data in st.session_state.data.items():
+                strategy_trades = data['matched_trades'].copy()
+                strategy_trades['Strategy'] = strategy_name
+                all_trades.append(strategy_trades)
+            
+            trades_df = pd.concat(all_trades, ignore_index=True)
+        else:
+            trades_df = st.session_state.data[selected_strategy]['matched_trades'].copy()
+            trades_df['Strategy'] = selected_strategy
+        
+        # Add filters
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            # Filter by symbol
+            symbols = sorted(trades_df['Symbol'].unique())
+            selected_symbol = st.selectbox('Filter by Symbol', ['All'] + list(symbols))
+        
+        with col2:
+            # Filter by date range
+            min_date = pd.to_datetime(trades_df['Buy Filled At']).min().date()
+            max_date = pd.to_datetime(trades_df['Sell Filled At']).max().date()
+            date_range = st.date_input(
+                'Select Date Range',
+                value=(min_date, max_date),
+                min_value=min_date,
+                max_value=max_date
+            )
+        
+        with col3:
+            # Filter by profit/loss
+            pnl_filter = st.selectbox('Filter by P&L', ['All', 'Profitable', 'Loss'])
+        
+        # Apply filters
+        filtered_df = trades_df.copy()
+        
+        # Symbol filter
+        if selected_symbol != 'All':
+            filtered_df = filtered_df[filtered_df['Symbol'] == selected_symbol]
+        
+        # Date filter
+        if len(date_range) == 2:
+            start_date, end_date = date_range
+            filtered_df = filtered_df[
+                (pd.to_datetime(filtered_df['Buy Filled At']).dt.date >= start_date) &
+                (pd.to_datetime(filtered_df['Sell Filled At']).dt.date <= end_date)
+            ]
+        
+        # P&L filter
+        if pnl_filter == 'Profitable':
+            filtered_df = filtered_df[filtered_df['Profit'] > 0]
+        elif pnl_filter == 'Loss':
+            filtered_df = filtered_df[filtered_df['Profit'] <= 0]
+        
+        # Format the dataframe for display
+        display_df = filtered_df.copy()
+        
+        # Convert timestamps to readable format
+        display_df['Buy Filled At'] = pd.to_datetime(display_df['Buy Filled At']).dt.strftime('%Y-%m-%d %H:%M:%S')
+        display_df['Sell Filled At'] = pd.to_datetime(display_df['Sell Filled At']).dt.strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Format numeric columns
+        display_df['Buy Price'] = display_df['Buy Price'].round(2)
+        display_df['Sell Price'] = display_df['Sell Price'].round(2)
+        display_df['Profit'] = display_df['Profit'].round(2)
+        display_df['Trade Duration (mins)'] = display_df['Trade Duration (mins)'].round(2)
+        
+        # Reorder columns for better readability
+        columns_order = [
+            'Strategy',
+            'Symbol',
+            'Buy Filled At',
+            'Sell Filled At',
+            'Buy Price',
+            'Sell Price',
+            'Quantity',
+            'Profit',
+            'Trade Duration (mins)'
+        ]
+        
+        display_df = display_df[columns_order]
+        
+        # Show the filtered trades
+        st.dataframe(
+            display_df,
+            hide_index=True,
+            column_config={
+                'Profit': st.column_config.NumberColumn(
+                    'Profit',
+                    format="$%.2f",
+                    help="Profit/Loss from the trade"
+                ),
+                'Buy Price': st.column_config.NumberColumn(
+                    'Buy Price',
+                    format="$%.2f"
+                ),
+                'Sell Price': st.column_config.NumberColumn(
+                    'Sell Price',
+                    format="$%.2f"
+                )
+            }
+        )
+        
+        # Show summary statistics for filtered trades
+        st.subheader("Filtered Trades Summary")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Number of Trades", len(filtered_df))
+        with col2:
+            st.metric("Total Profit", f"${filtered_df['Profit'].sum():.2f}")
+        with col3:
+            st.metric("Average Profit", f"${filtered_df['Profit'].mean():.2f}")
+        with col4:
+            win_rate = (filtered_df['Profit'] > 0).mean() * 100
+            st.metric("Win Rate", f"{win_rate:.2f}%")
+            
     # Force refresh if needed
     if should_refresh():
         time.sleep(3600)
