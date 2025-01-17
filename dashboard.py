@@ -476,7 +476,7 @@ def main():
         else:
             st.dataframe(st.session_state.data[selected_strategy]['current_holdings'])
     
-        with tab4:
+    with tab4:
         st.subheader("All Trades")
         
         if selected_strategy == "All Strategies":
@@ -596,7 +596,7 @@ def main():
         with col4:
             win_rate = (filtered_df['Profit'] > 0).mean() * 100
             st.metric("Win Rate", f"{win_rate:.2f}%")
-            
+
     # Force refresh if needed
     if should_refresh():
         time.sleep(3600)
