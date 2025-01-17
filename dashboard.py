@@ -613,13 +613,33 @@ def main():
 
 # Helper function to combine stats from multiple strategies
 def combine_strategy_stats(stats_list):
+    """Combine statistics from multiple strategies with default values"""
+    # Set default values if keys don't exist
+    default_stats = {
+        'Portfolio Value': 0,
+        'Cash Balance': 0,
+        'Total Trades': 0,
+        'Total Profit': 0,
+        'Average Profit per Trade': 0,
+        'Win Rate %': 0
+    }
+    
+    # Create a list of stats with defaults filled in
+    processed_stats = []
+    for s in stats_list:
+        # Create a new dict with defaults
+        stat_with_defaults = default_stats.copy()
+        # Update with actual values
+        stat_with_defaults.update(s)
+        processed_stats.append(stat_with_defaults)
+    
     combined = {
-        'Portfolio Value': sum(s['Portfolio Value'] for s in stats_list),
-        'Cash Balance': sum(s['Cash Balance'] for s in stats_list),
-        'Total Trades': sum(s['Total Trades'] for s in stats_list),
-        'Total Profit': sum(s['Total Profit'] for s in stats_list),
-        'Average Profit per Trade': statistics.mean(s['Average Profit per Trade'] for s in stats_list),
-        'Win Rate %': round(statistics.mean(s['Win Rate %'] for s in stats_list), 2)
+        'Portfolio Value': sum(s['Portfolio Value'] for s in processed_stats),
+        'Cash Balance': sum(s['Cash Balance'] for s in processed_stats),
+        'Total Trades': sum(s['Total Trades'] for s in processed_stats),
+        'Total Profit': sum(s['Total Profit'] for s in processed_stats),
+        'Average Profit per Trade': statistics.mean(s['Average Profit per Trade'] for s in processed_stats),
+        'Win Rate %': round(statistics.mean(s['Win Rate %'] for s in processed_stats), 2)
     }
     return combined
 
