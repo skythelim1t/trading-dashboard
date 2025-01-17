@@ -269,6 +269,7 @@ def calculate_trade_stats(matched_trades, api, initial_balance=100000):
 
     stats = {
         'Portfolio Value': round(current_balance, 2),
+        'Portfolio Return': round((current_balance - initial_balance) / initial_balance * 100, 2),
         'Cash Balance': round(cash_balance, 2),
         'Win Rate %': round((profitable_trades / len(matched_trades)) * 100, 2),
         'Return on Initial Capital %': round((total_profit / initial_balance) * 100, 2),
@@ -637,7 +638,7 @@ def combine_strategy_stats(stats_list):
     total_initial_capital = sum(100000 for s in processed_stats)
     combined = {
         'Portfolio Value': sum(s['Portfolio Value'] for s in processed_stats),
-        'Portfolio Return': round((sum(s['Portfolio Value'] for s in processed_stats) - total_initial_capital) / total_initial_capital, 2),
+        'Portfolio Return': round((sum(s['Portfolio Value'] for s in processed_stats) - total_initial_capital) / total_initial_capital * 100, 2),
         'Cash Balance': sum(s['Cash Balance'] for s in processed_stats),
         'Total Trades': sum(s['Total Trades'] for s in processed_stats),
         'Total Profit': sum(s['Total Profit'] for s in processed_stats),
