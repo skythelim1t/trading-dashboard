@@ -17,6 +17,23 @@ st.set_page_config(page_title="Trading Performance Dashboard", layout="wide")
 if 'last_refresh' not in st.session_state:
     st.session_state.last_refresh = datetime.now(pytz.timezone('US/Eastern'))
 
+def convert_to_est(timestamp):
+    """Convert timestamp to EST timezone"""
+    if pd.isna(timestamp):
+        return None
+    
+    # Convert to pandas timestamp if string
+    if isinstance(timestamp, str):
+        timestamp = pd.Timestamp(timestamp)
+    
+    # Make timezone aware if naive
+    if timestamp.tzinfo is None:
+        timestamp = pytz.utc.localize(timestamp)
+    
+    # Convert to EST
+    est = pytz.timezone('US/Eastern')
+    return timestamp.astimezone(est)
+
 def load_api_keys():
     """Load API keys for all three strategies from environment variables or Streamlit secrets"""
     if os.path.exists('.env'):
@@ -143,11 +160,10 @@ def plot_stock_performance(stock_summary):
 def get_executed_trades(api):
     CHUNK_SIZE = 500
     all_orders = []
-    start_time = pd.Timestamp.utcnow()  # Start with the current UTC time
+    start_time = pd.Timestamp.utcnow()
     check_for_more_orders = True
 
     while check_for_more_orders:
-        # Fetch a chunk of orders
         api_orders = api.list_orders(
             status='closed',
             until=start_time.isoformat(),
@@ -156,22 +172,21 @@ def get_executed_trades(api):
             nested=False,
         )
 
-        # Append fetched orders to the list
         all_orders.extend(api_orders)
 
         if len(api_orders) == CHUNK_SIZE:
-            # More orders might be available; update `start_time`
-            # Ensure the timestamp is timezone-aware
             last_order_time = all_orders[-3].submitted_at
             start_time = pd.Timestamp(last_order_time).tz_convert('UTC') if pd.Timestamp(last_order_time).tzinfo else pd.Timestamp(last_order_time, tz='UTC')
         else:
-            # Final chunk, stop fetching
             check_for_more_orders = False
 
-    # Extract and filter trades for orders that were filled
     trades = []
     for order in all_orders:
-        if order.filled_at and order.status == 'filled':  # Check if the order was filled
+        if order.filled_at and order.status == 'filled':
+            # Convert timestamps to EST
+            filled_at_est = convert_to_est(order.filled_at)
+            submitted_at_est = convert_to_est(order.submitted_at)
+            
             trades.append({
                 'Order ID': order.id,
                 'Symbol': order.symbol,
@@ -180,8 +195,8 @@ def get_executed_trades(api):
                 'Filled Quantity': order.filled_qty,
                 'Filled Average Price': order.filled_avg_price,
                 'Status': order.status,
-                'Filled At': order.filled_at,
-                'Submitted At': order.submitted_at,
+                'Filled At': filled_at_est,
+                'Submitted At': submitted_at_est,
                 'Type': order.order_type,
                 'Time in Force': order.time_in_force
             })
@@ -194,31 +209,25 @@ def match_buy_and_sell_trades(df_trades):
     buys = df_trades[df_trades['Side'] == 'buy'].copy()
     sells = df_trades[df_trades['Side'] == 'sell'].copy()
 
-    # Convert 'Filled At' to datetime for comparison
-    buys['Filled At'] = pd.to_datetime(buys['Filled At'])
-    sells['Filled At'] = pd.to_datetime(sells['Filled At'])
+    # Convert 'Filled At' to datetime in EST if not already
+    buys['Filled At'] = buys['Filled At'].apply(convert_to_est)
+    sells['Filled At'] = sells['Filled At'].apply(convert_to_est)
 
     # Sort both DataFrames by 'Filled At'
     buys = buys.sort_values(by='Filled At')
     sells = sells.sort_values(by='Filled At')
 
-    # Initialize a list to store matched trades
     matches = []
-
-    # Iterate through each sell trade
     for _, sell in sells.iterrows():
-        # Find matching buy trades
         potential_matches = buys[
             (buys['Symbol'] == sell['Symbol']) &
             (buys['Filled Quantity'] == sell['Filled Quantity']) &
-            (buys['Filled At'] < sell['Filled At'])  # Ensure buy is before sell
+            (buys['Filled At'] < sell['Filled At'])
         ]
 
         if not potential_matches.empty:
-            # Select the first matching buy trade
             matched_buy = potential_matches.iloc[0]
-
-            # Append the match to the list
+            
             matches.append({
                 'Buy Order ID': matched_buy['Order ID'],
                 'Buy Filled At': matched_buy['Filled At'],
@@ -232,10 +241,8 @@ def match_buy_and_sell_trades(df_trades):
                 'Trade Duration (mins)': (sell['Filled At'] - matched_buy['Filled At']).total_seconds() / 60
             })
 
-            # Remove the matched buy trade from the buys DataFrame
             buys = buys.drop(matched_buy.name)
 
-    # Convert matches to a DataFrame
     matched_trades = pd.DataFrame(matches)
     return matched_trades
 
@@ -312,35 +319,29 @@ def calculate_stock_summary(matched_trades):
     return stock_summary
 
 def calculate_daily_summary(matched_trades, days=9):
-    # Convert dates to datetime if they aren't already
-    matched_trades['Sell Filled At'] = pd.to_datetime(matched_trades['Sell Filled At'])
-
+    # Ensure timestamps are in EST
+    matched_trades['Sell Filled At'] = matched_trades['Sell Filled At'].apply(convert_to_est)
+    
     # Get only the trades from last 5 trading days
-    today = pd.Timestamp.now(tz='UTC').normalize()
+    today = pd.Timestamp.now(tz=pytz.timezone('US/Eastern')).normalize()
     cutoff_date = today - pd.Timedelta(days=days)
     recent_trades = matched_trades[matched_trades['Sell Filled At'] >= cutoff_date].copy()
 
-    # Calculate percentage profit for each trade
     recent_trades['Profit %'] = (((recent_trades['Sell Price'] - recent_trades['Buy Price']) / recent_trades['Buy Price']) * 100) - 1
 
-    # Group by date
     daily_summary = recent_trades.groupby(recent_trades['Sell Filled At'].dt.date).agg({
         'Profit': ['sum', 'count', lambda x: (x > 0).mean() * 100, 'mean'],
-        'Profit %': 'mean',  # Added average profit percentage
+        'Profit %': 'mean',
         'Symbol': 'nunique',
         'Trade Duration (mins)': 'mean'
     }).round(2)
 
-    # Rename columns
     daily_summary.columns = ['Total Profit', 'Number of Trades', 'Win Rate %', 'Avg Profit/Trade',
                            'Avg Profit %', 'Unique Symbols', 'Avg Duration (mins)']
 
-    # Calculate daily best and worst performers
     daily_performers = {}
     for date in recent_trades['Sell Filled At'].dt.date.unique():
         day_trades = recent_trades[recent_trades['Sell Filled At'].dt.date == date]
-
-        # Group by symbol and calculate total profit
         symbol_profits = day_trades.groupby('Symbol')['Profit'].sum()
 
         if not symbol_profits.empty:
@@ -549,10 +550,13 @@ def main():
         # Format the dataframe for display
         display_df = filtered_df.copy()
         
-        # Convert timestamps to readable format
-        display_df['Buy Filled At'] = pd.to_datetime(display_df['Buy Filled At']).dt.strftime('%Y-%m-%d %H:%M:%S')
-        display_df['Sell Filled At'] = pd.to_datetime(display_df['Sell Filled At']).dt.strftime('%Y-%m-%d %H:%M:%S')
-        
+        # Convert timestamps to EST format
+        display_df['Buy Filled At'] = display_df['Buy Filled At'].apply(
+            lambda x: x.strftime('%Y-%m-%d %H:%M:%S %Z') if pd.notnull(x) else ''
+        )
+        display_df['Sell Filled At'] = display_df['Sell Filled At'].apply(
+            lambda x: x.strftime('%Y-%m-%d %H:%M:%S %Z') if pd.notnull(x) else ''
+        )
         # Format numeric columns
         display_df['Buy Price'] = display_df['Buy Price'].round(2)
         display_df['Sell Price'] = display_df['Sell Price'].round(2)
