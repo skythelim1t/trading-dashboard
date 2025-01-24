@@ -100,16 +100,18 @@ def create_metrics_cards(trade_stats, trailing_stats):
     
     # Trailing 7-day performance metrics
     st.subheader("Trailing 7-Day Performance")
-    cols = st.columns(4)
+    cols = st.columns(5)
     trailing_metrics = [
         ("Return", f"{trailing_stats['Return']}%"),
         ("Win Rate", f"{trailing_stats['Win Rate']}%"),
         ("Realized Profit", f"${trailing_stats['Realized Profit']:,.2f}"),
-        ("Unrealized Profit", f"${trailing_stats['Unrealized Profit']:,.2f}")
+        ("Unrealized Profit", f"${trailing_stats['Unrealized Profit']:,.2f}"),
+        ("Total Trades", trailing_stats['Total Trades'])
     ]
+    
     for col, (label, value) in zip(cols, trailing_metrics):
         col.metric(label, value)
-        
+
 
 def plot_daily_performance(daily_summary):
     """Create daily performance chart, excluding days with no trades"""
