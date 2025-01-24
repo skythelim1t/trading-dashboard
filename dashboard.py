@@ -108,7 +108,7 @@ def create_metrics_cards(trade_stats, trailing_stats):
         ("Unrealized Profit", f"${trailing_stats['Unrealized Profit']:,.2f}"),
         ("Total Trades", trailing_stats['Total Trades'])
     ]
-    
+
     for col, (label, value) in zip(cols, trailing_metrics):
         col.metric(label, value)
 
@@ -708,7 +708,8 @@ def calculate_trailing_stats(matched_trades, current_holdings, initial_balance=1
         'Return': round((realized_profit + unrealized_profit) / initial_balance * 100, 2),
         'Win Rate': round(win_rate, 2),
         'Realized Profit': round(realized_profit, 2),
-        'Unrealized Profit': round(unrealized_profit, 2)
+        'Unrealized Profit': round(unrealized_profit, 2),
+        'Total Trades': len(recent_trades)
     }
 
 
