@@ -83,21 +83,33 @@ def should_refresh():
     # Refresh if it's been an hour and we're in market hours
     return (now - last_refresh) >= timedelta(hours=1) and is_market_hours
 
-def create_metrics_cards(trade_stats):
-    """Create metric cards for key statistics"""
+def create_metrics_cards(trade_stats, trailing_stats):
+    """Create metric cards for overall and trailing performance"""
+    # Overall performance metrics
+    st.subheader("Overall Performance")
     cols = st.columns(5)
-    
     metrics = [
         ("Portfolio Value", f"${trade_stats['Portfolio Value']:,.2f}"),
         ("Portfolio Return", f"{trade_stats['Portfolio Return']}%"),
-        # ("Cash Balance", f"${trade_stats['Cash Balance']:,.2f}"),
         ("Win Rate", f"{trade_stats['Win Rate %']}%"),
-        ("Total Profit", f"${trade_stats['Total Profit']:,.2f}"),
+        ("Realized Profit", f"${trade_stats['Total Profit']:,.2f}"),
         ("Total Trades", trade_stats['Total Trades'])
     ]
-    
     for col, (label, value) in zip(cols, metrics):
         col.metric(label, value)
+    
+    # Trailing 7-day performance metrics
+    st.subheader("Trailing 7-Day Performance")
+    cols = st.columns(4)
+    trailing_metrics = [
+        ("Return", f"{trailing_stats['Return']}%"),
+        ("Win Rate", f"{trailing_stats['Win Rate']}%"),
+        ("Realized Profit", f"${trailing_stats['Realized Profit']:,.2f}"),
+        ("Unrealized Profit", f"${trailing_stats['Unrealized Profit']:,.2f}")
+    ]
+    for col, (label, value) in zip(cols, trailing_metrics):
+        col.metric(label, value)
+        
 
 def plot_daily_performance(daily_summary):
     """Create daily performance chart, excluding days with no trades"""
@@ -451,14 +463,26 @@ def main():
     # Display last refresh time
     st.caption(f"Last refreshed: {st.session_state.last_refresh.strftime('%Y-%m-%d %H:%M:%S ET')}")
     
-    # Display data based on selected strategy
+   # Calculate and display metrics
     if selected_strategy == "All Strategies":
-        # Aggregate data from all strategies
         combined_stats = combine_strategy_stats([data['trade_stats'] 
-                                              for data in st.session_state.data.values()])
-        create_metrics_cards(combined_stats)
+                                             for data in st.session_state.data.values()])
+        combined_trailing = combine_trailing_stats([
+            calculate_trailing_stats(
+                data['matched_trades'],
+                apis[strategy].list_positions()
+            ) for strategy, data in st.session_state.data.items()
+        ])
+        create_metrics_cards(combined_stats, combined_trailing)
     else:
-        create_metrics_cards(st.session_state.data[selected_strategy]['trade_stats'])
+        trailing_stats = calculate_trailing_stats(
+            st.session_state.data[selected_strategy]['matched_trades'],
+            apis[selected_strategy].list_positions()
+        )
+        create_metrics_cards(
+            st.session_state.data[selected_strategy]['trade_stats'],
+            trailing_stats
+        )
     
     # Update the tabs to include All Trades
     tab1, tab2, tab3, tab4 = st.tabs(["Daily Performance", "Stock Analysis", "Current Holdings", "All Trades"])
@@ -651,7 +675,40 @@ def combine_strategy_stats(stats_list):
     }
     return combined
 
-# Add similar helper functions for combining daily and stock summaries
+def combine_trailing_stats(stats_list):
+    """Combine trailing statistics from multiple strategies"""
+    combined = {
+        'Return': round(sum(s['Return'] for s in stats_list), 2),
+        'Win Rate': round(statistics.mean(s['Win Rate'] for s in stats_list), 2),
+        'Realized Profit': round(sum(s['Realized Profit'] for s in stats_list), 2),
+        'Unrealized Profit': round(sum(s['Unrealized Profit'] for s in stats_list), 2)
+    }
+    return combined
+
+
+def calculate_trailing_stats(matched_trades, current_holdings, initial_balance=100000):
+    seven_days_ago = pd.Timestamp.now(tz=pytz.timezone('US/Eastern')) - pd.Timedelta(days=7)
+    recent_trades = matched_trades[matched_trades['Sell Filled At'] >= seven_days_ago]
+    
+    if recent_trades.empty:
+        return {
+            'Return': 0,
+            'Win Rate': 0,
+            'Realized Profit': 0,
+            'Unrealized Profit': sum(float(pos.unrealized_pl) for pos in current_holdings)
+        }
+    
+    realized_profit = recent_trades['Profit'].sum()
+    win_rate = (len(recent_trades[recent_trades['Profit'] > 0]) / len(recent_trades)) * 100
+    unrealized_profit = sum(float(pos.unrealized_pl) for pos in current_holdings)
+    
+    return {
+        'Return': round((realized_profit + unrealized_profit) / initial_balance * 100, 2),
+        'Win Rate': round(win_rate, 2),
+        'Realized Profit': round(realized_profit, 2),
+        'Unrealized Profit': round(unrealized_profit, 2)
+    }
+
 
 if __name__ == "__main__":
     main()
