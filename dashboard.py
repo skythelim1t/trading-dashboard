@@ -683,7 +683,8 @@ def combine_trailing_stats(stats_list):
         'Return': round(sum(s['Return'] for s in stats_list), 2),
         'Win Rate': round(statistics.mean(s['Win Rate'] for s in stats_list), 2),
         'Realized Profit': round(sum(s['Realized Profit'] for s in stats_list), 2),
-        'Unrealized Profit': round(sum(s['Unrealized Profit'] for s in stats_list), 2)
+        'Unrealized Profit': round(sum(s['Unrealized Profit'] for s in stats_list), 2),
+        'Total Trades': sum(s['Total Trades'] for s in stats_list)
     }
     return combined
 
